@@ -19,9 +19,9 @@ export function Card({
     <MotionTag
       {...(props as any)}
       className={clsx(
-        "group relative overflow-hidden rounded-2xl glass-strong shadow-[0_18px_44px_rgba(0,0,0,.10)] " +
+        "group relative overflow-hidden rounded-2xl glass-strong shadow-soft dark:shadow-softDark " +
           "transition-[box-shadow,transform,border-color] " +
-          "hover:shadow-[0_26px_70px_rgba(0,0,0,.14)] hover:border-white/12",
+          "hover:shadow-[0_26px_70px_rgba(0,0,0,.14)] dark:hover:shadow-[0_26px_90px_rgba(0,0,0,.62)] hover:border-white/12",
         className
       )}
       whileHover={reduceMotion ? undefined : { y: -1 }}
@@ -34,4 +34,3 @@ export function Card({
     </MotionTag>
   );
 }
-

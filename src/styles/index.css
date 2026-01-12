@@ -14,17 +14,15 @@
     --danger: 239 68 68;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: 11 12 15;
-      --fg: 243 244 246;
-      --muted: 156 163 175;
-      --panel: 18 19 24;
-      --border: 255 255 255;
-      --accent: 10 132 255;
-      --accent2: 94 92 230;
-      --danger: 248 113 113;
-    }
+  html.dark {
+    --bg: 11 12 15;
+    --fg: 243 244 246;
+    --muted: 156 163 175;
+    --panel: 18 19 24;
+    --border: 255 255 255;
+    --accent: 10 132 255;
+    --accent2: 94 92 230;
+    --danger: 248 113 113;
   }
 
   html,
@@ -70,15 +68,15 @@
   }
 
   .glass {
-    background: rgb(var(--panel) / 0.62);
-    border: 1px solid rgb(var(--border) / 0.1);
+    background: rgb(var(--panel) / 0.58);
+    border: 1px solid rgb(var(--border) / 0.12);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
   }
 
   .glass-strong {
-    background: rgb(var(--panel) / 0.78);
-    border: 1px solid rgb(var(--border) / 0.12);
+    background: rgb(var(--panel) / 0.74);
+    border: 1px solid rgb(var(--border) / 0.14);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
   }

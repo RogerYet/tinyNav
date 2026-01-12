@@ -25,6 +25,11 @@ npm run build
 npx wrangler pages dev dist
 ```
 
+如果 `.dev.vars` 未生效，可显式注入（示例）：
+```bash
+npx wrangler pages dev dist -b PASSWORD=admin -b SESSION_SECRET=daiyi114514
+```
+
 创建 `.dev.vars`（不会提交到线上）：
 
 ```ini
@@ -62,7 +67,15 @@ SESSION_SECRET=your_long_random_secret
 - `GET /api/me`：返回 `{ authed: boolean }`
 - `POST /api/login`：`{ password }`，成功后写入 HttpOnly cookie（默认 7 天）
 - `POST /api/logout`：清 cookie
-- `POST /api/admin/save`：保存整份数据（需要登录，否则 401）
+- 管理端（需要登录，否则 401）：
+  - `POST /api/admin/groups`
+  - `PUT /api/admin/groups/:id`
+  - `DELETE /api/admin/groups/:id`
+  - `POST /api/admin/links`
+  - `PUT /api/admin/links/:id`
+  - `DELETE /api/admin/links/:id`
+  - `POST /api/admin/reorder`
+- `POST /api/admin/save`：旧接口（保留兼容，后台已切到增量 API）
 
 ## KV 数据结构
 
@@ -92,3 +105,5 @@ SESSION_SECRET=your_long_random_secret
 - Session 使用 WebCrypto `HMAC-SHA256` 对 payload 签名；推荐设置 `SESSION_SECRET`，避免 `PASSWORD` 变更导致所有 session 失效。
 - 登录失败会基于 IP 做简单延迟与计数（KV，10 分钟窗口）。
 - `public/_redirects` 用于 SPA 路由回退（保证 `/login`、`/admin` 刷新不 404）。
+- 调试：本地可访问 `GET /api/debug/env` 查看变量是否注入（生产环境禁用）。
+- favicon：可选设置环境变量 `USE_FAVICON_SERVICE=true`，服务端会把链接的 `icon` 设为 Google favicon 服务（更稳）；默认使用 `${origin}/favicon.ico`。

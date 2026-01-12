@@ -1,11 +1,12 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ExternalLink, Globe } from "lucide-react";
+import { Globe } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Card } from "../components/Card";
 import { Navbar } from "../components/Navbar";
 import { SearchBar } from "../components/SearchBar";
 import { api } from "../lib/api";
 import { useMe } from "../lib/auth";
+import { faviconServiceUrl, normalizeFaviconUrl } from "../lib/favicon";
 import type { CloudNavData, Group, LinkItem } from "../types";
 
 function normalizeText(s: string) {
@@ -42,13 +43,18 @@ export default function Home() {
   }, []);
 
   const groups = useMemo(() => {
-    const g = (data?.groups ?? []).slice().sort((a, b) => a.order - b.order);
+    const g = (data?.groups ?? [])
+      .filter((x) => x.enabled ?? true)
+      .slice()
+      .sort((a, b) => a.order - b.order);
     return g;
   }, [data]);
 
   const linksByGroup = useMemo(() => {
     const map = new Map<string, LinkItem[]>();
+    const enabledGroupIds = new Set(groups.map((g) => g.id));
     for (const l of data?.links ?? []) {
+      if (!enabledGroupIds.has(l.groupId)) continue;
       if (!matchesQuery(l, query)) continue;
       const arr = map.get(l.groupId) ?? [];
       arr.push(l);
@@ -115,17 +121,10 @@ export default function Home() {
                         className="p-4"
                       >
                         <div className="flex items-start gap-3">
-                          <motion.div
-                            className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/10 dark:bg-white/6"
-                            whileHover={reduceMotion ? undefined : { rotate: -2, scale: 1.03 }}
-                            transition={{ type: "spring", stiffness: 420, damping: 30 }}
-                          >
-                            <Globe size={18} className="text-fg/80" />
-                          </motion.div>
+                          <LinkIcon url={l.url} icon={l.icon} reduceMotion={!!reduceMotion} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center justify-between gap-2">
                               <div className="truncate text-sm font-semibold">{l.title}</div>
-                              <ExternalLink size={16} className="text-muted opacity-70 group-hover:opacity-100" />
                             </div>
                             {l.description ? (
                               <div className="mt-1 line-clamp-2 text-xs text-muted">{l.description}</div>
@@ -144,5 +143,31 @@ export default function Home() {
         </motion.div>
       </main>
     </div>
+  );
+}
+
+function LinkIcon({ url, icon, reduceMotion }: { url: string; icon?: string; reduceMotion: boolean }) {
+  const [fallback, setFallback] = useState(false);
+  const primary = icon?.trim() ? icon.trim() : normalizeFaviconUrl(url);
+  const src = fallback ? faviconServiceUrl(url) : primary;
+
+  return (
+    <motion.div
+      className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white/10 dark:bg-white/6"
+      whileHover={reduceMotion ? undefined : { rotate: -2, scale: 1.03 }}
+      transition={{ type: "spring", stiffness: 420, damping: 30 }}
+    >
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          className="h-6 w-6 rounded-md"
+          loading="lazy"
+          onError={() => setFallback(true)}
+        />
+      ) : (
+        <Globe size={18} className="text-fg/80" />
+      )}
+    </motion.div>
   );
 }

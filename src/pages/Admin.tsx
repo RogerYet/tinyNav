@@ -1,28 +1,39 @@
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { ArrowDown, ArrowUp, Check, Link as LinkIcon, LogOut, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import { ArrowDown, ArrowUp, Globe, LogOut, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { Modal } from "../components/Modal";
 import { Navbar } from "../components/Navbar";
-import { api } from "../lib/api";
+import { Switch } from "../components/Switch";
+import { SortableOverlayList } from "../components/sortable/SortableOverlayList";
+import { ApiError, api } from "../lib/api";
 import { useMe } from "../lib/auth";
+import { faviconServiceUrl, normalizeFaviconUrl } from "../lib/favicon";
+import { isHttpOrHttpsUrl, normalizeHttpUrl } from "../lib/url";
 import type { CloudNavData, Group, LinkItem } from "../types";
 
-function sortData(data: CloudNavData): CloudNavData {
-  return {
-    groups: data.groups.slice().sort((a, b) => a.order - b.order),
-    links: data.links.slice().sort((a, b) => a.order - b.order)
-  };
+function toErrorView(e: unknown, fallback: string): { message: string; details?: string[] } {
+  if (e instanceof ApiError) {
+    const lines = formatZodIssues(e.details);
+    return { message: e.message || fallback, details: lines };
+  }
+  if (e instanceof Error) return { message: e.message || fallback };
+  return { message: fallback };
 }
 
-function nextOrder(items: { order: number }[]) {
-  return items.length ? Math.max(...items.map((i) => i.order)) + 1 : 0;
-}
-
-function uid() {
-  return crypto.randomUUID();
+function formatZodIssues(details: unknown): string[] | undefined {
+  if (!Array.isArray(details)) return undefined;
+  const lines: string[] = [];
+  for (const it of details) {
+    const message = (it as any)?.message;
+    const path = (it as any)?.path;
+    if (typeof message !== "string") continue;
+    const pathText = Array.isArray(path) && path.length ? path.map(String).join(".") : "";
+    lines.push(pathText ? `${pathText}: ${message}` : message);
+  }
+  return lines.length ? lines : undefined;
 }
 
 export default function Admin() {
@@ -33,8 +44,7 @@ export default function Admin() {
   const [data, setData] = useState<CloudNavData | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; details?: string[] } | null>(null);
 
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
   const [editingLink, setEditingLink] = useState<LinkItem | null>(null);
@@ -45,15 +55,17 @@ export default function Admin() {
     if (authed === false) nav("/login", { replace: true, state: { from: "/admin" } });
   }, [authed, nav]);
 
+  async function refreshData() {
+    const d = await api.linksNoCache();
+    setData(d);
+    setSelectedGroupId((prev) => {
+      if (prev && d.groups.some((g) => g.id === prev)) return prev;
+      return d.groups[0]?.id ?? null;
+    });
+  }
+
   useEffect(() => {
-    api
-      .linksNoCache()
-      .then((d) => {
-        const sorted = sortData(d);
-        setData(sorted);
-        setSelectedGroupId(sorted.groups[0]?.id ?? null);
-      })
-      .catch((e: unknown) => setError(e instanceof Error ? e.message : "加载失败"));
+    refreshData().catch((e: unknown) => setError(toErrorView(e, "加载失败")));
   }, []);
 
   const groups = useMemo(() => (data ? data.groups.slice().sort((a, b) => a.order - b.order) : []), [data]);
@@ -69,82 +81,161 @@ export default function Admin() {
     return links.filter((l) => l.groupId === selectedGroup.id).sort((a, b) => a.order - b.order);
   }, [links, selectedGroup]);
 
-  function updateGroup(patch: Partial<Group> & { id: string }) {
-    setSaved(false);
-    setData((prev) => {
-      if (!prev) return prev;
-      return { ...prev, groups: prev.groups.map((g) => (g.id === patch.id ? { ...g, ...patch } : g)) };
-    });
+  async function logout() {
+    await api.logout();
+    nav("/", { replace: true });
   }
 
-  function updateLink(patch: Partial<LinkItem> & { id: string }) {
-    setSaved(false);
-    setData((prev) => {
-      if (!prev) return prev;
-      return { ...prev, links: prev.links.map((l) => (l.id === patch.id ? { ...l, ...patch } : l)) };
-    });
-  }
-
-  function moveGroup(id: string, dir: -1 | 1) {
-    setSaved(false);
-    setData((prev) => {
-      if (!prev) return prev;
-      const arr = prev.groups.slice().sort((a, b) => a.order - b.order);
-      const idx = arr.findIndex((g) => g.id === id);
-      const j = idx + dir;
-      if (idx < 0 || j < 0 || j >= arr.length) return prev;
-      const a = arr[idx]!;
-      const b = arr[j]!;
-      const swapped = arr.map((g) => {
-        if (g.id === a.id) return { ...g, order: b.order };
-        if (g.id === b.id) return { ...g, order: a.order };
-        return g;
-      });
-      return { ...prev, groups: swapped };
-    });
-  }
-
-  function moveLink(id: string, dir: -1 | 1) {
-    if (!selectedGroup) return;
-    setSaved(false);
-    setData((prev) => {
-      if (!prev) return prev;
-      const inGroup = prev.links
-        .filter((l) => l.groupId === selectedGroup.id)
-        .slice()
-        .sort((a, b) => a.order - b.order);
-      const idx = inGroup.findIndex((l) => l.id === id);
-      const j = idx + dir;
-      if (idx < 0 || j < 0 || j >= inGroup.length) return prev;
-      const a = inGroup[idx]!;
-      const b = inGroup[j]!;
-      const swapped = prev.links.map((l) => {
-        if (l.id === a.id) return { ...l, order: b.order };
-        if (l.id === b.id) return { ...l, order: a.order };
-        return l;
-      });
-      return { ...prev, links: swapped };
-    });
-  }
-
-  async function save() {
+  async function reorderGroups(nextIds: string[]) {
     if (!data) return;
+    setError(null);
+    setData((prev) => {
+      if (!prev) return prev;
+      const byId = new Map(prev.groups.map((g) => [g.id, g] as const));
+      const nextGroups = nextIds.map((id, i) => ({ ...byId.get(id)!, order: i }));
+      return { ...prev, groups: nextGroups };
+    });
+    try {
+      await api.admin.reorder({ groups: nextIds.map((id, i) => ({ id, order: i })) });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "排序保存失败"));
+      await refreshData();
+    }
+  }
+
+  async function reorderLinksInSelectedGroup(nextIds: string[]) {
+    if (!selectedGroup) return;
+    setError(null);
+    setData((prev) => {
+      if (!prev) return prev;
+      const other = prev.links.filter((l) => l.groupId !== selectedGroup.id);
+      const byId = new Map(prev.links.map((l) => [l.id, l] as const));
+      const nextLinks = nextIds.map((id, i) => ({ ...byId.get(id)!, order: i }));
+      return { ...prev, links: [...other, ...nextLinks] };
+    });
+    try {
+      await api.admin.reorder({ links: nextIds.map((id, i) => ({ id, order: i })) });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "排序保存失败"));
+      await refreshData();
+    }
+  }
+
+  function moveId(ids: string[], id: string, dir: -1 | 1) {
+    const i = ids.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= ids.length) return ids;
+    const next = ids.slice();
+    const [moved] = next.splice(i, 1);
+    next.splice(j, 0, moved!);
+    return next;
+  }
+
+  async function createGroup(name: string) {
     setBusy(true);
     setError(null);
     try {
-      await api.save(sortData(data));
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1200);
+      await api.admin.groups.create(name);
+      await refreshData();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "保存失败");
+      setError(toErrorView(e, "创建失败"));
     } finally {
       setBusy(false);
     }
   }
 
-  async function logout() {
-    await api.logout();
-    nav("/", { replace: true });
+  async function updateGroup(id: string, name: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.groups.update(id, { name });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "更新失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateGroupEnabled(id: string, enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.groups.update(id, { enabled });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "更新失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteGroup(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.groups.delete(id);
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "删除失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createLink(input: { title: string; url: string; description: string; icon: string }) {
+    if (!selectedGroup) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const url = isHttpOrHttpsUrl(input.url) ? input.url : normalizeHttpUrl(input.url);
+      await api.admin.links.create({
+        groupId: selectedGroup.id,
+        title: input.title,
+        url,
+        icon: input.icon || undefined,
+        description: input.description || undefined
+      });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "创建失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateLink(id: string, patch: { title: string; url: string; description: string; icon: string }) {
+    setBusy(true);
+    setError(null);
+    try {
+      const url = isHttpOrHttpsUrl(patch.url) ? patch.url : normalizeHttpUrl(patch.url);
+      await api.admin.links.update(id, {
+        title: patch.title,
+        url,
+        icon: patch.icon,
+        description: patch.description || ""
+      });
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "更新失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteLink(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.admin.links.delete(id);
+      await refreshData();
+    } catch (e: unknown) {
+      setError(toErrorView(e, "删除失败"));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -160,96 +251,71 @@ export default function Admin() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="space-y-1">
               <div className="text-2xl font-semibold tracking-tight">管理</div>
-              <div className="text-sm text-muted">修改分类与链接，并保存到 KV。</div>
+              <div className="text-sm text-muted">更改会实时保存到 KV。</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                leftIcon={<RefreshCw size={18} />}
+                onClick={() => refreshData().catch(() => undefined)}
+                disabled={busy}
+              >
+                刷新
+              </Button>
               <Button variant="secondary" leftIcon={<LogOut size={18} />} onClick={logout} disabled={busy}>
                 退出
               </Button>
-              <Button variant="primary" leftIcon={<Save size={18} />} onClick={save} disabled={busy || !data}>
-                {busy ? "保存中…" : "保存"}
-              </Button>
-              <AnimatePresence>
-                {saved ? (
-                  <motion.div
-                    key="saved"
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    className="inline-flex items-center gap-2 rounded-2xl glass px-3 py-2 text-sm"
-                  >
-                    <Check size={16} className="text-accent" />
-                    已保存
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
             </div>
           </div>
 
-          {error ? <div className="glass rounded-2xl p-4 text-sm text-danger">{error}</div> : null}
+          {error ? (
+            <div className="glass rounded-2xl p-4 text-sm">
+              <div className="font-medium text-danger">{error.message}</div>
+              {error.details?.length ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-danger/90">
+                  {error.details.map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
             <Card className="p-4 lg:col-span-4">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-semibold">分类</div>
-                <Button variant="secondary" leftIcon={<Plus size={18} />} onClick={() => setCreatingGroup(true)}>
+                <Button
+                  variant="secondary"
+                  leftIcon={<Plus size={18} />}
+                  onClick={() => setCreatingGroup(true)}
+                  disabled={busy}
+                >
                   新增
                 </Button>
               </div>
-              <div className="mt-3 space-y-2">
-                <AnimatePresence mode="popLayout">
-                  {groups.map((g) => (
-                    <motion.div key={g.id} layout className="flex items-center justify-between gap-2">
-                      <button
-                        className={
-                          "flex-1 rounded-2xl px-3 py-2 text-left text-sm transition " +
-                          (selectedGroup?.id === g.id
-                            ? "bg-white/12 dark:bg-white/8 border border-white/12"
-                            : "hover:bg-white/10 dark:hover:bg-white/6 border border-transparent")
-                        }
-                        onClick={() => setSelectedGroupId(g.id)}
-                      >
-                        <div className="font-medium">{g.name}</div>
-                      </button>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => moveGroup(g.id, -1)}
-                          leftIcon={<ArrowUp size={16} />}
-                        />
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => moveGroup(g.id, 1)}
-                          leftIcon={<ArrowDown size={16} />}
-                        />
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => setEditingGroup(g)}
-                          leftIcon={<Pencil size={16} />}
-                        />
-                        <Button
-                          variant="danger"
-                          className="h-9 px-2"
-                          onClick={() => {
-                            if (!confirm(`删除分类「${g.name}」？该分类下的链接也会被删除。`)) return;
-                            setSaved(false);
-                            setData((prev) => {
-                              if (!prev) return prev;
-                              const groups2 = prev.groups.filter((x) => x.id !== g.id);
-                              const links2 = prev.links.filter((x) => x.groupId !== g.id);
-                              return { groups: groups2, links: links2 };
-                            });
-                            if (selectedGroupId === g.id) setSelectedGroupId(groups.find((x) => x.id !== g.id)?.id ?? null);
-                          }}
-                          leftIcon={<Trash2 size={16} />}
-                        />
-                      </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
+              <div className="mt-3">
+                <SortableOverlayList
+                  items={groups}
+                  onReorder={reorderGroups}
+                  renderItem={(g, handle) => (
+                    <GroupRow
+                      group={g}
+                      selected={selectedGroup?.id === g.id}
+                      busy={busy}
+                      handle={handle}
+                      onSelect={() => setSelectedGroupId(g.id)}
+                      onToggleEnabled={(next) => updateGroupEnabled(g.id, next).catch(() => undefined)}
+                      onMoveUp={() => reorderGroups(moveId(groups.map((x) => x.id), g.id, -1))}
+                      onMoveDown={() => reorderGroups(moveId(groups.map((x) => x.id), g.id, 1))}
+                      onEdit={() => setEditingGroup(g)}
+                      onDelete={() => {
+                        if (!confirm(`删除分类「${g.name}」？该分类下的链接也会被删除。`)) return;
+                        deleteGroup(g.id).catch(() => undefined);
+                      }}
+                    />
+                  )}
+                />
               </div>
             </Card>
 
@@ -260,66 +326,44 @@ export default function Admin() {
                   variant="secondary"
                   leftIcon={<Plus size={18} />}
                   onClick={() => setCreatingLink(true)}
-                  disabled={!selectedGroup}
+                  disabled={!selectedGroup || busy}
                 >
                   新增
                 </Button>
               </div>
 
-              <div className="mt-3 space-y-2">
-                <AnimatePresence mode="popLayout">
-                  {linksInSelectedGroup.map((l) => (
-                    <motion.div
-                      key={l.id}
-                      layout
-                      className="flex items-start justify-between gap-2 rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4 p-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <LinkIcon size={16} className="text-muted" />
-                          <div className="truncate text-sm font-semibold">{l.title}</div>
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted">{l.url}</div>
-                        {l.description ? (
-                          <div className="mt-1 line-clamp-2 text-xs text-muted">{l.description}</div>
-                        ) : null}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => moveLink(l.id, -1)}
-                          leftIcon={<ArrowUp size={16} />}
-                        />
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => moveLink(l.id, 1)}
-                          leftIcon={<ArrowDown size={16} />}
-                        />
-                        <Button
-                          variant="ghost"
-                          className="h-9 px-2"
-                          onClick={() => setEditingLink(l)}
-                          leftIcon={<Pencil size={16} />}
-                        />
-                        <Button
-                          variant="danger"
-                          className="h-9 px-2"
-                          onClick={() => {
-                            if (!confirm(`删除链接「${l.title}」？`)) return;
-                            setSaved(false);
-                            setData((prev) => (prev ? { ...prev, links: prev.links.filter((x) => x.id !== l.id) } : prev));
-                          }}
-                          leftIcon={<Trash2 size={16} />}
-                        />
-                      </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-
-                {!linksInSelectedGroup.length ? (
+              <div className="mt-3">
+                {selectedGroup ? (
+                  <SortableOverlayList
+                    items={linksInSelectedGroup}
+                    onReorder={reorderLinksInSelectedGroup}
+                    renderItem={(l, handle) => (
+                      <LinkRow
+                        link={l}
+                        busy={busy}
+                        handle={handle}
+                        onMoveUp={() =>
+                          reorderLinksInSelectedGroup(moveId(linksInSelectedGroup.map((x) => x.id), l.id, -1))
+                        }
+                        onMoveDown={() =>
+                          reorderLinksInSelectedGroup(moveId(linksInSelectedGroup.map((x) => x.id), l.id, 1))
+                        }
+                        onEdit={() => setEditingLink(l)}
+                        onDelete={() => {
+                          if (!confirm(`删除链接「${l.title}」？`)) return;
+                          deleteLink(l.id).catch(() => undefined);
+                        }}
+                      />
+                    )}
+                  />
+                ) : (
                   <div className="rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4 p-6 text-sm text-muted">
+                    还没有分类。先添加一个分类。
+                  </div>
+                )}
+
+                {selectedGroup && !linksInSelectedGroup.length ? (
+                  <div className="mt-2 rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4 p-6 text-sm text-muted">
                     这个分类还没有链接。点击右上角“新增”。
                   </div>
                 ) : null}
@@ -336,12 +380,7 @@ export default function Admin() {
         onClose={() => setCreatingGroup(false)}
         onSubmit={(name) => {
           setCreatingGroup(false);
-          setSaved(false);
-          setData((prev) => {
-            if (!prev) return prev;
-            const g: Group = { id: uid(), name, order: nextOrder(prev.groups) };
-            return { ...prev, groups: [...prev.groups, g] };
-          });
+          createGroup(name).catch(() => undefined);
         }}
       />
 
@@ -351,59 +390,171 @@ export default function Admin() {
         initial={{ name: editingGroup?.name ?? "" }}
         onClose={() => setEditingGroup(null)}
         onSubmit={(name) => {
-          if (!editingGroup) return;
-          updateGroup({ id: editingGroup.id, name });
+          const g = editingGroup;
           setEditingGroup(null);
+          if (!g) return;
+          updateGroup(g.id, name).catch(() => undefined);
         }}
       />
 
-      <LinkModal
+      <LinkEditorModal
         open={creatingLink}
         title="新增链接"
-        groupId={selectedGroup?.id ?? ""}
-        initial={{ title: "", url: "", description: "" }}
+        initial={{ title: "", url: "", description: "", icon: "" }}
         onClose={() => setCreatingLink(false)}
         onSubmit={(patch) => {
-          if (!selectedGroup) return;
           setCreatingLink(false);
-          setSaved(false);
-          setData((prev) => {
-            if (!prev) return prev;
-            const inGroup = prev.links.filter((x) => x.groupId === selectedGroup.id);
-            const l: LinkItem = {
-              id: uid(),
-              groupId: selectedGroup.id,
-              title: patch.title,
-              url: patch.url,
-              description: patch.description || undefined,
-              order: nextOrder(inGroup)
-            };
-            return { ...prev, links: [...prev.links, l] };
-          });
+          createLink(patch).catch(() => undefined);
         }}
       />
 
-      <LinkModal
+      <LinkEditorModal
         open={!!editingLink}
         title="编辑链接"
-        groupId={editingLink?.groupId ?? ""}
         initial={{
           title: editingLink?.title ?? "",
           url: editingLink?.url ?? "",
-          description: editingLink?.description ?? ""
+          description: editingLink?.description ?? "",
+          icon: editingLink?.icon ?? ""
         }}
         onClose={() => setEditingLink(null)}
         onSubmit={(patch) => {
-          if (!editingLink) return;
-          updateLink({
-            id: editingLink.id,
-            title: patch.title,
-            url: patch.url,
-            description: patch.description || undefined
-          });
+          const l = editingLink;
           setEditingLink(null);
+          if (!l) return;
+          updateLink(l.id, patch).catch(() => undefined);
         }}
       />
+    </div>
+  );
+}
+
+function GroupRow({
+  group,
+  selected,
+  busy,
+  handle,
+  overlay,
+  onSelect,
+  onToggleEnabled,
+  onMoveUp,
+  onMoveDown,
+  onEdit,
+  onDelete
+}: {
+  group: Group;
+  selected: boolean;
+  busy: boolean;
+  handle?: React.ReactNode;
+  overlay?: boolean;
+  onSelect?: () => void;
+  onToggleEnabled?: (next: boolean) => void;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  const enabled = group.enabled ?? true;
+  return (
+    <div
+      className={
+        "flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4 p-2 " +
+        (overlay ? "shadow-[0_30px_90px_rgba(0,0,0,.18)] dark:shadow-[0_30px_110px_rgba(0,0,0,.55)]" : "")
+      }
+    >
+      <div className="flex-none">{handle ?? <div className="h-9 w-9" />}</div>
+      <button
+        type="button"
+        className={
+          "flex-1 min-w-[10rem] rounded-2xl px-3 py-2 text-left text-sm transition border " +
+          (selected ? "bg-white/12 dark:bg-white/8 border-white/12" : "bg-transparent border-transparent hover:bg-white/6 dark:hover:bg-white/6")
+        }
+        onClick={onSelect}
+        disabled={!onSelect}
+      >
+        <div className={"font-medium truncate " + (enabled ? "" : "opacity-60")}>{group.name}</div>
+      </button>
+
+      <div className="flex-none">
+        <Switch checked={enabled} disabled={busy || !onToggleEnabled} onCheckedChange={(v) => onToggleEnabled?.(v)} />
+      </div>
+
+      <div className="ml-auto flex flex-none items-center gap-1">
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onMoveUp} disabled={!onMoveUp} leftIcon={<ArrowUp size={16} />} />
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onMoveDown} disabled={!onMoveDown} leftIcon={<ArrowDown size={16} />} />
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onEdit} disabled={!onEdit} leftIcon={<Pencil size={16} />} />
+        <Button variant="destructive" className="h-9 w-9 px-0" onClick={onDelete} disabled={!onDelete} leftIcon={<Trash2 size={16} />} />
+      </div>
+    </div>
+  );
+}
+
+function LinkRow({
+  link,
+  busy,
+  handle,
+  overlay,
+  onMoveUp,
+  onMoveDown,
+  onEdit,
+  onDelete
+}: {
+  link: LinkItem;
+  busy: boolean;
+  handle?: React.ReactNode;
+  overlay?: boolean;
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
+  return (
+    <div
+      className={
+        "flex flex-wrap items-start gap-2 rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4 p-3 " +
+        (overlay ? "shadow-[0_30px_90px_rgba(0,0,0,.18)] dark:shadow-[0_30px_110px_rgba(0,0,0,.55)]" : "")
+      }
+    >
+      <div className="pt-0.5 flex-none">{handle ?? <div className="h-9 w-9" />}</div>
+      <div className="min-w-[14rem] flex-1">
+        <div className="flex items-center gap-2">
+          <LinkRowIcon url={link.url} icon={link.icon} />
+          <div className="truncate text-sm font-semibold">{link.title}</div>
+          {link.icon?.trim() ? (
+            <span className="ml-1 rounded-full border border-white/10 bg-white/6 dark:bg-white/5 px-2 py-0.5 text-[11px] text-muted">
+              icon
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-1 truncate text-xs text-muted">{link.url}</div>
+        {link.description ? <div className="mt-1 line-clamp-2 text-xs text-muted">{link.description}</div> : null}
+      </div>
+      <div className="ml-auto flex flex-none items-center gap-1">
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onMoveUp} disabled={!onMoveUp} leftIcon={<ArrowUp size={16} />} />
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onMoveDown} disabled={!onMoveDown} leftIcon={<ArrowDown size={16} />} />
+        <Button variant="ghost" className="h-9 w-9 px-0" onClick={onEdit} disabled={!onEdit} leftIcon={<Pencil size={16} />} />
+        <Button variant="destructive" className="h-9 w-9 px-0" onClick={onDelete} disabled={!onDelete} leftIcon={<Trash2 size={16} />} />
+      </div>
+    </div>
+  );
+}
+
+function LinkRowIcon({ url, icon }: { url: string; icon?: string }) {
+  const [fallback, setFallback] = useState(false);
+  const primary = icon?.trim() ? icon.trim() : normalizeFaviconUrl(url);
+  const src = fallback ? faviconServiceUrl(url) : primary;
+  return (
+    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/10 dark:bg-white/6">
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          className="block h-4 w-4 shrink-0 rounded"
+          onError={() => setFallback(true)}
+        />
+      ) : (
+        <Globe size={14} className="text-muted" />
+      )}
     </div>
   );
 }
@@ -449,33 +600,33 @@ function GroupModal({
   );
 }
 
-function LinkModal({
+function LinkEditorModal({
   open,
   title,
   initial,
-  groupId,
   onClose,
   onSubmit
 }: {
   open: boolean;
   title: string;
-  groupId: string;
-  initial: { title: string; url: string; description: string };
+  initial: { title: string; url: string; description: string; icon?: string };
   onClose: () => void;
-  onSubmit: (patch: { title: string; url: string; description: string }) => void;
+  onSubmit: (patch: { title: string; url: string; description: string; icon: string }) => void;
 }) {
   const [titleValue, setTitleValue] = useState(initial.title);
   const [urlValue, setUrlValue] = useState(initial.url);
   const [descValue, setDescValue] = useState(initial.description);
+  const [iconValue, setIconValue] = useState(initial.icon ?? "");
 
   useEffect(() => setTitleValue(initial.title), [initial.title]);
   useEffect(() => setUrlValue(initial.url), [initial.url]);
   useEffect(() => setDescValue(initial.description), [initial.description]);
+  useEffect(() => setIconValue(initial.icon ?? ""), [initial.icon]);
 
   return (
     <Modal open={open} title={title} onClose={onClose}>
       <div className="space-y-4">
-        <div className="text-xs text-muted">Group: {groupId}</div>
+        <div className="text-xs text-muted">在这里编辑本导航站显示的标题/描述/图标。</div>
         <label className="block space-y-2">
           <div className="text-sm font-medium text-fg/80">标题</div>
           <input
@@ -490,10 +641,42 @@ function LinkModal({
           <input
             value={urlValue}
             onChange={(e) => setUrlValue(e.target.value)}
+            onBlur={() => {
+              const normalized = isHttpOrHttpsUrl(urlValue) ? urlValue : normalizeHttpUrl(urlValue);
+              if (normalized && normalized !== urlValue) setUrlValue(normalized);
+              if (!iconValue.trim() && normalized) setIconValue(normalizeFaviconUrl(normalized));
+            }}
             className="glass w-full rounded-2xl px-4 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
             placeholder="https://..."
           />
         </label>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 space-y-2">
+            <div className="text-sm font-medium text-fg/80">图标（可选）</div>
+            <input
+              value={iconValue}
+              onChange={(e) => setIconValue(e.target.value)}
+              className="glass w-full rounded-2xl px-4 py-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
+              placeholder="https://.../icon.png（留空=自动）"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                className="h-9 px-3"
+                onClick={() => {
+                  const normalized = isHttpOrHttpsUrl(urlValue) ? urlValue : normalizeHttpUrl(urlValue);
+                  if (normalized) setUrlValue(normalized);
+                  setIconValue("");
+                }}
+                disabled={!urlValue.trim()}
+              >
+                恢复自动
+              </Button>
+              <div className="text-xs text-muted">优先使用你填写的 icon URL</div>
+            </div>
+          </div>
+          <IconPreview siteUrl={urlValue} iconUrl={iconValue} />
+        </div>
         <label className="block space-y-2">
           <div className="text-sm font-medium text-fg/80">描述（可选）</div>
           <textarea
@@ -510,7 +693,14 @@ function LinkModal({
           </Button>
           <Button
             variant="primary"
-            onClick={() => onSubmit({ title: titleValue.trim(), url: urlValue.trim(), description: descValue.trim() })}
+            onClick={() =>
+              onSubmit({
+                title: titleValue.trim(),
+                url: urlValue.trim(),
+                description: descValue.trim(),
+                icon: iconValue.trim()
+              })
+            }
             disabled={!titleValue.trim() || !urlValue.trim()}
           >
             确认
@@ -518,5 +708,25 @@ function LinkModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function IconPreview({ siteUrl, iconUrl }: { siteUrl: string; iconUrl: string }) {
+  const [fallback, setFallback] = useState(false);
+  const primary = iconUrl.trim() ? iconUrl.trim() : normalizeFaviconUrl(siteUrl);
+  const src = fallback ? faviconServiceUrl(siteUrl) : primary;
+  return (
+    <div className="mt-1 flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-white/6 dark:bg-white/4">
+      {src ? (
+        <img
+          src={src}
+          alt=""
+          className="h-6 w-6 rounded-md"
+          onError={() => setFallback(true)}
+        />
+      ) : (
+        <Globe size={18} className="text-muted" />
+      )}
+    </div>
   );
 }

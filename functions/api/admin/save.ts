@@ -1,8 +1,8 @@
-import { json, readBodyJson, requireAuthed, saveData } from "../_utils";
+import { json, readBodyJson, requireAuth, saveData } from "../_utils";
 
 export const onRequestPost: PagesFunction = async (ctx) => {
   const env = ctx.env as any;
-  const auth = await requireAuthed(ctx.request, env);
+  const auth = await requireAuth(ctx.request, env);
   if (!auth.ok) return auth.res;
 
   let body: any;

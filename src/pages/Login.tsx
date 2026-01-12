@@ -1,5 +1,5 @@
 import { motion, useReducedMotion } from "framer-motion";
-import { Lock, LogIn } from "lucide-react";
+import { Lock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "../components/Button";
@@ -77,7 +77,7 @@ export default function Login() {
               {error ? <div className="text-sm text-danger">{error}</div> : null}
 
               <div className="flex items-center justify-between">
-                <Button type="submit" variant="primary" disabled={busy || !password} leftIcon={<LogIn size={18} />}>
+                <Button type="submit" variant="primary" disabled={busy || !password}>
                   {busy ? "正在登录…" : "登录"}
                 </Button>
                 <Button type="button" variant="ghost" onClick={() => nav("/", { replace: true })}>

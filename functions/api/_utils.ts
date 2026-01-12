@@ -5,7 +5,7 @@ type Env = {
 };
 
 export type CloudNavData = {
-  groups: { id: string; name: string; order: number }[];
+  groups: { id: string; name: string; order: number; enabled?: boolean }[];
   links: {
     id: string;
     groupId: string;
@@ -24,9 +24,9 @@ export const SESSION_DAYS = 7;
 
 export const defaultSeedData: CloudNavData = {
   groups: [
-    { id: "g-dev", name: "开发", order: 0 },
-    { id: "g-life", name: "日常", order: 1 },
-    { id: "g-ref", name: "参考", order: 2 }
+    { id: "g-dev", name: "开发", order: 0, enabled: true },
+    { id: "g-life", name: "日常", order: 1, enabled: true },
+    { id: "g-ref", name: "参考", order: 2, enabled: true }
   ],
   links: [
     {
@@ -222,6 +222,10 @@ export async function requireAuthed(req: Request, env: Env): Promise<{ ok: true 
   return { ok: true };
 }
 
+export async function requireAuth(req: Request, env: Env) {
+  return requireAuthed(req, env);
+}
+
 export async function loadData(env: Env): Promise<CloudNavData> {
   const existing = await env.CLOUDNAV_KV.get(DATA_KEY, "json");
   if (!existing) return defaultSeedData;
@@ -232,6 +236,30 @@ export async function saveData(env: Env, data: CloudNavData) {
   await env.CLOUDNAV_KV.put(DATA_KEY, JSON.stringify(data));
 }
 
+export function normalizeData(data: CloudNavData): CloudNavData {
+  const groups = data.groups.slice().sort((a, b) => a.order - b.order);
+  for (let i = 0; i < groups.length; i++)
+    groups[i] = { ...groups[i], order: i, enabled: typeof groups[i].enabled === "boolean" ? groups[i].enabled : true };
+
+  const groupIds = new Set(groups.map((g) => g.id));
+  const keptLinks = data.links.filter((l) => groupIds.has(l.groupId));
+
+  const byGroup = new Map<string, typeof keptLinks>();
+  for (const l of keptLinks) {
+    const arr = byGroup.get(l.groupId) ?? [];
+    arr.push(l);
+    byGroup.set(l.groupId, arr);
+  }
+
+  const links: CloudNavData["links"] = [];
+  for (const g of groups) {
+    const arr = (byGroup.get(g.id) ?? []).slice().sort((a, b) => a.order - b.order);
+    for (let i = 0; i < arr.length; i++) links.push({ ...arr[i], order: i });
+  }
+
+  return { groups, links };
+}
+
 export function getClientIp(req: Request) {
   return (
     req.headers.get("CF-Connecting-IP") ||
@@ -240,4 +268,3 @@ export function getClientIp(req: Request) {
     "unknown"
   );
 }
-

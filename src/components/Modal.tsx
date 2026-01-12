@@ -43,7 +43,7 @@ export function Modal({
           <motion.div
             role="dialog"
             aria-modal="true"
-            className="relative w-full max-w-xl rounded-2xl glass-strong shadow-[0_40px_120px_rgba(0,0,0,.35)]"
+            className="relative flex w-full max-w-xl max-h-[calc(100vh-2rem)] flex-col overflow-hidden rounded-2xl glass-strong shadow-[0_40px_120px_rgba(0,0,0,.35)]"
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.98 }}
             animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.98 }}
@@ -55,7 +55,7 @@ export function Modal({
                 关闭
               </Button>
             </div>
-            <div className="px-5 py-4">{children}</div>
+            <div className="px-5 py-4 overflow-auto">{children}</div>
           </motion.div>
         </motion.div>
       ) : null}
@@ -63,4 +63,3 @@ export function Modal({
     document.body
   );
 }
-

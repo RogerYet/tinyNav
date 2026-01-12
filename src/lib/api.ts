@@ -1,6 +1,18 @@
 import type { CloudNavData } from "../types";
+import { isHttpOrHttpsUrl, normalizeHttpUrl } from "./url";
 
 export type MeResponse = { authed: boolean };
+
+export class ApiError extends Error {
+  status: number;
+  details?: unknown;
+  constructor(message: string, status: number, details?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.details = details;
+  }
+}
 
 async function jsonFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const res = await fetch(input, {
@@ -13,13 +25,15 @@ async function jsonFetch<T>(input: RequestInfo | URL, init?: RequestInit): Promi
 
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
+    let details: unknown = undefined;
     try {
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as { error?: string; details?: unknown };
       if (data?.error) message = data.error;
+      if (data?.details) details = data.details;
     } catch {
       // ignore
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status, details);
   }
 
   return (await res.json()) as T;
@@ -33,5 +47,58 @@ export const api = {
     jsonFetch<{ ok: true }>("/api/login", { method: "POST", body: JSON.stringify({ password }) }),
   logout: () => jsonFetch<{ ok: true }>("/api/logout", { method: "POST" }),
   save: (data: CloudNavData) =>
-    jsonFetch<{ ok: true }>("/api/admin/save", { method: "POST", body: JSON.stringify(data) })
+    jsonFetch<{ ok: true }>("/api/admin/save", { method: "POST", body: JSON.stringify(data) }),
+  admin: {
+    groups: {
+      create: (name: string) =>
+        jsonFetch<{ ok: true; group: CloudNavData["groups"][number] }>("/api/admin/groups", {
+          method: "POST",
+          body: JSON.stringify({ name })
+        }),
+      update: (id: string, patch: { name?: string; enabled?: boolean }) =>
+        jsonFetch<{ ok: true; group: CloudNavData["groups"][number] }>(`/api/admin/groups/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(patch)
+        }),
+      delete: (id: string) =>
+        jsonFetch<{ ok: true }>(`/api/admin/groups/${id}`, {
+          method: "DELETE"
+        })
+    },
+    links: {
+      create: (input: {
+        groupId: string;
+        title: string;
+        url: string;
+        description?: string;
+        icon?: string;
+      }) =>
+        jsonFetch<{ ok: true; link: CloudNavData["links"][number] }>("/api/admin/links", {
+          method: "POST",
+          body: JSON.stringify({
+            ...input,
+            url: isHttpOrHttpsUrl(input.url) ? input.url : normalizeHttpUrl(input.url)
+          })
+        }),
+      update: (
+        id: string,
+        patch: { title?: string; url?: string; description?: string; icon?: string; groupId?: string }
+      ) =>
+        jsonFetch<{ ok: true; link: CloudNavData["links"][number] }>(`/api/admin/links/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({
+            ...patch,
+            ...(patch.url ? { url: isHttpOrHttpsUrl(patch.url) ? patch.url : normalizeHttpUrl(patch.url) } : null)
+          })
+        }),
+      delete: (id: string) =>
+        jsonFetch<{ ok: true }>(`/api/admin/links/${id}`, {
+          method: "DELETE"
+        })
+    },
+    reorder: (body: {
+      groups?: { id: string; order: number }[];
+      links?: { id: string; order: number; groupId?: string }[];
+    }) => jsonFetch<{ ok: true }>("/api/admin/reorder", { method: "POST", body: JSON.stringify(body) })
+  }
 };

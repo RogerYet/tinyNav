@@ -2,6 +2,7 @@ export type Group = {
   id: string;
   name: string;
   order: number;
+  enabled?: boolean;
 };
 
 export type LinkItem = {
@@ -18,4 +19,3 @@ export type CloudNavData = {
   groups: Group[];
   links: LinkItem[];
 };
-

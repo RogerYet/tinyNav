@@ -18,8 +18,13 @@ export const onRequestPost: PagesFunction = async (ctx) => {
   const req = ctx.request;
   const env = ctx.env as any;
 
-  if (!env.PASSWORD)
-    return json({ error: "Server misconfigured: missing PASSWORD" }, { status: 500, headers: { "Cache-Control": "no-store" } });
+  const serverPassword = (env.PASSWORD ?? "").toString().trim();
+  if (!serverPassword) {
+    return json(
+      { error: "Server misconfigured: missing PASSWORD (set it in .dev.vars or Pages Environment variables)" },
+      { status: 500, headers: { "Cache-Control": "no-store" } }
+    );
+  }
 
   const ip = getClientIp(req);
   const failKey = `${LOGIN_FAIL_KEY_PREFIX}${ip}`;
@@ -38,10 +43,10 @@ export const onRequestPost: PagesFunction = async (ctx) => {
     return json({ error: e instanceof Error ? e.message : "Bad Request" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 
-  const provided = (body.password ?? "").toString();
+  const provided = (body.password ?? "").toString().trim();
   if (!provided) return json({ error: "Missing password" }, { status: 400, headers: { "Cache-Control": "no-store" } });
 
-  if (provided !== env.PASSWORD) {
+  if (provided !== serverPassword) {
     const nextFails = fails + 1;
     await env.CLOUDNAV_KV.put(failKey, JSON.stringify({ fails: nextFails, last: Date.now() }), {
       expirationTtl: 10 * 60
