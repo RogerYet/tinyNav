@@ -1,4 +1,16 @@
-name = "applebar-cloudnav"
-compatibility_date = "2025-01-01"
-pages_build_output_dir = "dist"
+name = "tinynav"
+main = "src/worker.ts"
+compatibility_date = "2026-01-14"
+
+[assets]
+directory = "dist"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "CLOUDNAV_DB"
+class_name = "CloudNavDB"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CloudNavDB"]
 
