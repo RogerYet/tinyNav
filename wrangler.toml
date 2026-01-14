@@ -12,5 +12,5 @@ class_name = "CloudNavDB"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["CloudNavDB"]
+new_sqlite_classes = ["CloudNavDB"]
 
